@@ -18,7 +18,6 @@ from xdsl_smt.dialects.smt_dialect import BoolType, DefineFunOp, CallOp
 from xdsl.dialects.builtin import ModuleOp
 from ...utils.transfer_to_smt_util import (
     get_low_bits,
-    set_high_bits,
     count_lzeros,
     count_rzeros,
     count_lones,
@@ -83,8 +82,7 @@ class SMTPureLoweringPattern(Generic[_OpType], SMTLoweringRewritePattern):
         self,
         op: _OpType,
         rewriter: PatternRewriter,
-    ):
-        ...
+    ): ...
 
     def rewrite(
         self: SMTPureLoweringPattern[_OpType],
@@ -266,16 +264,6 @@ class CountRZeroOpPattern(smt_pure_lowering_pattern(transfer.CountRZeroOp)):
         rewriter.replace_matched_op(resList[-1])
 
 
-class SetHighBitsOpPattern(smt_pure_lowering_pattern(transfer.SetHighBitsOp)):
-    def rewrite_pure(
-        self, op: transfer.SetHighBitsOp, rewriter: PatternRewriter
-    ) -> None:
-        result = set_high_bits(op.operands[0], op.operands[1])
-        for newOp in result[:-1]:
-            rewriter.insert_op_before_matched_op(newOp)
-        rewriter.replace_matched_op(result[-1])
-
-
 class GetLowBitsOpPattern(smt_pure_lowering_pattern(transfer.GetLowBitsOp)):
     def rewrite_pure(
         self, op: transfer.GetLowBitsOp, rewriter: PatternRewriter
@@ -358,7 +346,6 @@ transfer_to_smt_patterns: dict[type[Operation], SMTLoweringRewritePattern] = {
     transfer.CountLZeroOp: CountLZeroOpPattern(),
     transfer.CountROneOp: CountROneOpPattern(),
     transfer.CountRZeroOp: CountRZeroOpPattern(),
-    transfer.SetHighBitsOp: SetHighBitsOpPattern(),
     transfer.GetLowBitsOp: GetLowBitsOpPattern(),
     transfer.SMinOp: SMinOpPattern(),
     transfer.SMaxOp: SMaxOpPattern(),
