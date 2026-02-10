@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Sequence
-from xdsl.dialects.builtin import ModuleOp, IntegerType, StringAttr, UnitAttr
+from xdsl.dialects.builtin import ModuleOp, IntegerType, StringAttr, UnitAttr, ArrayAttr
 from xdsl.dialects.pdl import (
     ApplyNativeConstraintOp,
     ApplyNativeRewriteOp,
@@ -18,7 +18,7 @@ from xdsl.rewriter import InsertPoint, Rewriter
 
 from xdsl_smt.dialects.effects import ub_effect
 from xdsl_smt.dialects.effects.effect import StateType
-from xdsl_smt.semantics.refinements import IntegerTypeRefinementSemantics
+from xdsl_smt.semantics.refinements import find_refinement_semantics
 from xdsl_smt.semantics.semantics import RefinementSemantics
 
 from xdsl_smt.dialects import pdl_dataflow as pdl_dataflow
@@ -263,7 +263,7 @@ class OperationRewrite(RewritePattern):
 @dataclass
 class ReplaceRewrite(RewritePattern):
     rewrite_context: PDLToSMTRewriteContext
-    refinement: RefinementSemantics
+    refinement: RefinementSemantics | None
 
     @op_type_rewrite_pattern
     def match_and_rewrite(self, op: ReplaceOp, rewriter: PatternRewriter):
@@ -289,7 +289,18 @@ class ReplaceRewrite(RewritePattern):
                 raise Exception("Cannot handle operations with multiple results")
             replacing_value = replacing_values[0]
 
-        value_refinement = self.refinement.get_semantics(
+        if self.refinement is None:
+            replaced_types = op.attributes["__replaced_types"]
+            replacing_types = op.attributes["__replacing_types"]
+            assert isa(replaced_types, ArrayAttr[Attribute])
+            assert isa(replacing_types, ArrayAttr[Attribute])
+            refinement = find_refinement_semantics(
+                replaced_types.data[0], replacing_types.data[0]
+            )
+        else:
+            refinement = self.refinement
+
+        value_refinement = refinement.get_semantics(
             replaced_value,
             replacing_value,
             rewriter,
@@ -522,6 +533,46 @@ class ComputationOpRewrite(RewritePattern):
             ), "Operations used as computations in PDL should not have effects"
 
 
+def annotate_replace_op(pattern: PatternOp):
+    """
+    Annotate all `pdl.replace` operations in the given pattern with the types of the
+    replaced and replacing values.
+    """
+    values_to_types: dict[SSAValue, tuple[Attribute, ...]] = {}
+    for op in pattern.walk():
+        if isinstance(op, OperandOp):
+            if op.value_type is None:
+                raise Exception("Cannot handle non-typed operands")
+            owner = op.value_type.owner
+            assert isinstance(owner, TypeOp)
+            assert owner.constantType is not None
+            values_to_types[op.value] = (owner.constantType,)
+        if isinstance(op, OperationOp):
+            values: list[Attribute] = []
+            for type_value in op.type_values:
+                owner = type_value.owner
+                assert isinstance(owner, TypeOp)
+                assert owner.constantType is not None
+                values.append(owner.constantType)
+            values_to_types[op.op] = tuple(values)
+        if isinstance(op, ResultOp):
+            values_to_types[op.val] = (
+                values_to_types[op.parent_][op.index.value.data],
+            )
+        if isinstance(op, ReplaceOp):
+            replaced_value_types = values_to_types[op.op_value]
+            if len(op.repl_values) != 0:
+                replacing_value_types: list[Attribute] = []
+                for repl_value in op.repl_values:
+                    replacing_value_types.append(values_to_types[repl_value][0])
+                replacing_types = tuple(replacing_value_types)
+            else:
+                assert op.repl_operation is not None
+                replacing_types = values_to_types[op.repl_operation]
+            op.attributes["__replaced_types"] = ArrayAttr(replaced_value_types)
+            op.attributes["__replacing_types"] = ArrayAttr(replacing_types)
+
+
 @dataclass
 class PDLToSMTLowerer:
     native_rewrites: dict[
@@ -557,7 +608,7 @@ class PDLToSMTLowerer:
             str, Callable[[ApplyNativeConstraintOp, PDLToSMTRewriteContext], bool]
         ]
     )
-    refinement: RefinementSemantics = IntegerTypeRefinementSemantics()
+    refinement: RefinementSemantics | None = None
 
     def mark_pdl_operations(self, op: PatternOp):
         """
@@ -614,6 +665,7 @@ class PDLToSMTLowerer:
         new_state_op = DeclareConstOp(StateType())
         Rewriter.insert_op(new_state_op, insert_point)
         rewrite_context = PDLToSMTRewriteContext(new_state_op.res, new_state_op.res)
+        annotate_replace_op(pattern)
 
         walker = PatternRewriteWalker(
             GreedyRewritePatternApplier(

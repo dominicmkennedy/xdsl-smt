@@ -12,6 +12,7 @@ from xdsl.dialects.comb import Comb
 from xdsl.dialects.test import Test
 from xdsl.dialects.memref import MemRef
 from xdsl_smt.dialects.smt_array_dialect import SMTArray
+from xdsl_smt.dialects.smt_floatingpoint_dialect import SMTFloatingPointDialect
 from xdsl_smt.dialects.smt_int_dialect import SMTIntDialect
 from xdsl_smt.dialects.effects.effect import EffectDialect
 from xdsl_smt.dialects.effects.ub_effect import UBEffectDialect
@@ -22,9 +23,11 @@ from xdsl_smt.passes.lower_effects import LowerEffectPass
 from xdsl_smt.passes.load_parametric_int_semantics import LoadIntSemanticsPass
 from xdsl_smt.passes.lower_memory_effects import LowerMemoryEffectsPass
 from xdsl_smt.passes.lower_effects_with_memory import LowerEffectsWithMemoryPass
+from xdsl_smt.passes.lower_smt_tensor import LowerSMTTensor
 from xdsl_smt.passes.merge_func_results import MergeFuncResultsPass
 from xdsl_smt.passes.lower_memory_to_array import LowerMemoryToArrayPass
 from xdsl_smt.passes.raise_llvm_to_func import RaiseLLVMToFunc
+from xdsl_smt.passes.lower_abbv_to_bv import LowerAbbvToBvPass
 
 from xdsl_smt.passes.dynamic_semantics import DynamicSemantics
 
@@ -39,11 +42,13 @@ from xdsl_smt.dialects.hw_dialect import HW
 from xdsl_smt.dialects.llvm_dialect import LLVM
 from xdsl_smt.dialects.tv_dialect import TVDialect
 from xdsl_smt.dialects.ub import UBDialect
+from xdsl_smt.dialects.ab_bitvector_dialect import ABBitVectorDialect
 
 from xdsl_smt.passes.dead_code_elimination import DeadCodeElimination
 from xdsl_smt.passes.lower_pairs import LowerPairs
 from xdsl_smt.passes.lower_to_smt import LowerToSMTPass
 from xdsl_smt.passes.lower_ub_to_pairs import LowerUBToPairs
+from xdsl_smt.passes.rewrite_smt_tensor import RewriteSMTTensor
 from xdsl_smt.passes.smt_expand import SMTExpand
 from xdsl_smt.passes.pdl_add_implicit_properties import PDLAddImplicitPropertiesPass
 
@@ -79,6 +84,9 @@ class OptMain(xDSLOptMain):
         self.ctx.register_dialect(SMTArray.name, lambda: SMTArray)
         self.ctx.register_dialect(SMTTensorDialect.name, lambda: SMTTensorDialect)
         self.ctx.register_dialect(SMTUtilsDialect.name, lambda: SMTUtilsDialect)
+        self.ctx.register_dialect(
+            SMTFloatingPointDialect.name, lambda: SMTFloatingPointDialect
+        )
         self.ctx.register_dialect(EffectDialect.name, lambda: EffectDialect)
         self.ctx.register_dialect(UBEffectDialect.name, lambda: UBEffectDialect)
         self.ctx.register_dialect(MemoryEffectDialect.name, lambda: MemoryEffectDialect)
@@ -93,12 +101,15 @@ class OptMain(xDSLOptMain):
         self.ctx.register_dialect(Test.name, lambda: Test)
         self.ctx.register_dialect(MemRef.name, lambda: MemRef)
         self.ctx.register_dialect(UBDialect.name, lambda: UBDialect)
+        self.ctx.register_dialect(ABBitVectorDialect.name, lambda: ABBitVectorDialect)
         self.ctx.load_registered_dialect(SMTDialect.name)
         self.ctx.load_registered_dialect(Transfer.name)
         self.ctx.load_registered_dialect(SMTIntDialect.name)
         self.ctx.load_registered_dialect(SMTBitVectorDialect.name)
         self.ctx.load_registered_dialect(SMTUtilsDialect.name)
         self.ctx.load_registered_dialect(SMTArray.name)
+        self.ctx.load_registered_dialect(SMTFloatingPointDialect.name)
+        self.ctx.load_registered_dialect(SMTTensorDialect.name)
 
     def register_all_passes(self):
         super().register_all_passes()
@@ -121,6 +132,9 @@ class OptMain(xDSLOptMain):
             PDLAddImplicitPropertiesPass.name, lambda: PDLAddImplicitPropertiesPass
         )
         self.register_pass(RaiseLLVMToFunc.name, lambda: RaiseLLVMToFunc)
+        self.register_pass(LowerAbbvToBvPass.name, lambda: LowerAbbvToBvPass)
+        self.register_pass(RewriteSMTTensor.name, lambda: RewriteSMTTensor)
+        self.register_pass(LowerSMTTensor.name, lambda: LowerSMTTensor)
 
     def register_all_targets(self):
         super().register_all_targets()

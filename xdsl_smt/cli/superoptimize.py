@@ -9,13 +9,10 @@ from xdsl_smt.utils.get_submodule_path import get_mlir_fuzz_executable_path
 
 from xdsl.context import Context
 from xdsl.parser import Parser
-from xdsl.rewriter import Rewriter
 
 from xdsl_smt.superoptimization.synthesizer import synthesize_constants
 from xdsl_smt.dialects import get_all_dialects
-import xdsl_smt.dialects.synth_dialect as synth
-from xdsl.dialects.builtin import ModuleOp, IntegerAttr, IntegerType
-import xdsl_smt.dialects.hw_dialect as hw
+from xdsl.dialects.builtin import ModuleOp
 
 
 def read_program_from_enumerator(
@@ -82,18 +79,6 @@ def register_all_arguments(arg_parser: argparse.ArgumentParser):
         help="Optimize SMT queries before sending them to the solver",
         action="store_true",
     )
-
-
-def replace_synth_with_constants(
-    program: ModuleOp, values: list[IntegerAttr[IntegerType]]
-) -> None:
-    synth_ops: list[synth.ConstantOp] = []
-    for op in program.walk():
-        if isinstance(op, synth.ConstantOp):
-            synth_ops.append(op)
-
-    for op, value in zip(synth_ops, values):
-        Rewriter.replace_op(op, hw.ConstantOp(value))
 
 
 def main() -> None:
