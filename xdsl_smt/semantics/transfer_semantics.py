@@ -20,13 +20,7 @@ from xdsl.utils.hints import isa
 from xdsl.dialects.builtin import IntegerAttr, IntegerType
 from xdsl_smt.utils.transfer_to_smt_util import (
     get_low_bits,
-    count_lzeros,
-    count_rzeros,
-    count_lones,
-    count_rones,
-    reverse_bits,
-    is_non_negative,
-    is_negative,
+    count_zero_side_bits,
     get_high_bits,
 )
 
@@ -371,15 +365,7 @@ class UShlOverflowOpSemantics(OperationSemantics):
         effect_state: SSAValue | None,
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
-        """
-        Overflow = ShAmt >= getBitWidth();
-        if (Overflow)
-          return APInt(BitWidth, 0);
-        Overflow = ShAmt > countl_zero();
-
-        overflow should be ShAmt >= getBitWidth() ||  ShAmt > countl_zero()
-        Can't be replaced by ShAmt > countl_zero() because countl_zero() <=getBitWidth()
-        """
+        """Overflow iff the shift amount is too large or a shift-roundtrip loses bits."""
         assert isinstance(lhs_type := operands[0].type, smt_bv.BitVectorType)
         width = lhs_type.width
         const_value = width
@@ -389,16 +375,19 @@ class UShlOverflowOpSemantics(OperationSemantics):
         shift_amount = operands[1]
 
         shift_amount_ge_bitwidth = smt_bv.UgeOp(shift_amount, bv_width.res)
-        countl_zero_ops = count_lzeros(operand)
-        lzero_operand = countl_zero_ops[-1].results[0]
-        shift_amount_gt_lzero = smt_bv.UgtOp(shift_amount, lzero_operand)
-        or_op = smt.OrOp(shift_amount_ge_bitwidth.res, shift_amount_gt_lzero.res)
+        shifted = smt_bv.ShlOp(operand, shift_amount)
+        unshifted = smt_bv.LShrOp(shifted.res, shift_amount)
+        differs = smt.DistinctOp(unshifted.res, operand)
+        or_op = smt.OrOp(shift_amount_ge_bitwidth.res, differs.res)
 
-        overflow_ops = (
-            [bv_width, shift_amount_ge_bitwidth]
-            + countl_zero_ops
-            + [shift_amount_gt_lzero, or_op]
-        )
+        overflow_ops = [
+            bv_width,
+            shift_amount_ge_bitwidth,
+            shifted,
+            unshifted,
+            differs,
+            or_op,
+        ]
 
         bv_res, bool_to_bv1_ops = smt_bool_to_bv1(or_op.result)
 
@@ -420,18 +409,7 @@ class SShlOverflowOpSemantics(OperationSemantics):
         effect_state: SSAValue | None,
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
-        """
-        Overflow = ShAmt >= getBitWidth();
-        if (Overflow)
-            return APInt(BitWidth, 0);
-        if (isNonNegative()) // Don't allow sign change.
-            Overflow = ShAmt >= countl_zero();
-        else
-            Overflow = ShAmt >= countl_one();
-
-        overflow should be ShAmt >= getBitWidth() ||
-            (isNonNegative()&&ShAmt >= countl_zero() || isNegative()&&ShAmt >= countl_one())
-        """
+        """Overflow iff the shift amount is too large or an arithmetic shift-roundtrip changes the value."""
         assert isinstance(lhs_type := operands[0].type, smt_bv.BitVectorType)
         width = lhs_type.width
         const_value = width
@@ -440,48 +418,20 @@ class SShlOverflowOpSemantics(OperationSemantics):
         operand = operands[0]
         shift_amount = operands[1]
 
-        # ShAmt >= getBitWidth()
         shift_amount_ge_bitwidth = smt_bv.UgeOp(shift_amount, bv_width.res)
+        shifted = smt_bv.ShlOp(operand, shift_amount)
+        unshifted = smt_bv.AShrOp(shifted.res, shift_amount)
+        differs = smt.DistinctOp(unshifted.res, operand)
+        final_or_op = smt.OrOp(shift_amount_ge_bitwidth.res, differs.res)
 
-        # isNonNegative()
-        is_non_negative_ops = is_non_negative(operand)
-        is_non_negative_operand = is_non_negative_ops[-1].results[0]
-
-        # ShAmt >= countl_zero()
-        countl_zero_ops = count_lzeros(operand)
-        lzero_operand = countl_zero_ops[-1].results[0]
-        shift_amount_ge_lzero = smt_bv.UgeOp(shift_amount, lzero_operand)
-
-        # isNegative()
-        is_negative_ops = is_negative(operand)
-        is_negative_operand = is_negative_ops[-1].results[0]
-
-        # ShAmt >= countl_one()
-        countl_one_ops = count_lones(operand)
-        lone_operand = countl_one_ops[-1].results[0]
-        shift_amount_ge_lone = smt_bv.UgeOp(shift_amount, lone_operand)
-
-        # isNonNegative()&&ShAmt >= countl_zero()
-        and_op = smt.AndOp(is_non_negative_operand, shift_amount_ge_lzero.res)
-
-        # isNegative()&&ShAmt >= countl_one()
-        and1_op = smt.AndOp(is_negative_operand, shift_amount_ge_lone.res)
-
-        # isNonNegative()&&ShAmt >= countl_zero() || isNegative()&&ShAmt >= countl_one()
-        or_op = smt.OrOp(and_op.result, and1_op.result)
-
-        final_or_op = smt.OrOp(shift_amount_ge_bitwidth.res, or_op.result)
-
-        overflow_ops = (
-            [bv_width, shift_amount_ge_bitwidth]
-            + is_non_negative_ops
-            + countl_zero_ops
-            + [shift_amount_ge_lzero]
-            + is_negative_ops
-            + countl_one_ops
-            + [shift_amount_ge_lone]
-            + [and_op, and1_op, or_op, final_or_op]
-        )
+        overflow_ops = [
+            bv_width,
+            shift_amount_ge_bitwidth,
+            shifted,
+            unshifted,
+            differs,
+            final_or_op,
+        ]
 
         bv_res, bool_to_bv1_ops = smt_bool_to_bv1(final_or_op.result)
 
@@ -569,17 +519,18 @@ class IsNegativeOpSemantics(OperationSemantics):
         effect_state: SSAValue | None,
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
-        neg_ops = is_negative(operands[0])
-        neg_res = neg_ops[-1].results[0]
+        assert isinstance(val_type := operands[0].type, smt_bv.BitVectorType)
+        const_zero = smt_bv.ConstantOp(0, val_type.width)
+        neg_cmp = smt_bv.SltOp(operands[0], const_zero.res)
 
         bv0 = smt_bv.ConstantOp.from_int_value(0, 1)
         bv1 = smt_bv.ConstantOp.from_int_value(1, 1)
-        ite_op = smt.IteOp(neg_res, bv1.res, bv0.res)
+        ite_op = smt.IteOp(neg_cmp.res, bv1.res, bv0.res)
         poison_op = smt.ConstantBoolOp(False)
         res = PairOp(ite_op.res, poison_op.result)
 
         rewriter.insert_op_before_matched_op(
-            neg_ops + [bv0, bv1, ite_op, poison_op, res]
+            [const_zero, neg_cmp, bv0, bv1, ite_op, poison_op, res]
         )
         return ((res.res,), effect_state)
 
@@ -665,7 +616,9 @@ class CountLOneOpSemantics(OperationSemantics):
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
         operand = operands[0]
-        resList = count_lones(operand)
+        neg_b = smt_bv.NotOp.get(operand)
+        assert isinstance(neg_b.res.type, smt_bv.BitVectorType)
+        resList = [neg_b] + count_zero_side_bits(neg_b.results[0], True)
         rewriter.insert_op_before_matched_op(resList)
         return ((resList[-1].results[0],), effect_state)
 
@@ -680,7 +633,8 @@ class CountLZeroOpSemantics(OperationSemantics):
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
         operand = operands[0]
-        resList = count_lzeros(operand)
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+        resList = count_zero_side_bits(operand, True)
         rewriter.insert_op_before_matched_op(resList)
         return ((resList[-1].results[0],), effect_state)
 
@@ -695,9 +649,10 @@ class CountROneOpSemantics(OperationSemantics):
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
         operand = operands[0]
-        resList, afterList = count_rones(operand)
+        neg_b = smt_bv.NotOp.get(operand)
+        assert isinstance(neg_b.res.type, smt_bv.BitVectorType)
+        resList = [neg_b] + count_zero_side_bits(neg_b.results[0], False)
         rewriter.insert_op_before_matched_op(resList)
-        rewriter.insert_op_before_matched_op(afterList)
         return ((resList[-1].results[0],), effect_state)
 
 
@@ -711,9 +666,9 @@ class CountRZeroOpSemantics(OperationSemantics):
         rewriter: PatternRewriter,
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
         operand = operands[0]
-        resList, afterList = count_rzeros(operand)
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+        resList = count_zero_side_bits(operand, False)
         rewriter.insert_op_before_matched_op(resList)
-        rewriter.insert_op_before_matched_op(afterList)
         return ((resList[-1].results[0],), effect_state)
 
 
@@ -1124,8 +1079,21 @@ class ReverseBitsOpSemantics(OperationSemantics):
     ) -> tuple[Sequence[SSAValue], SSAValue | None]:
         op_ty = operands[0].type
         assert isinstance(op_ty, smt_bv.BitVectorType)
-        res = reverse_bits(operands[0], rewriter)
-        return ((res,), effect_state)
+        n = op_ty.width.data
+        if n == 1:
+            return ((operands[0],), effect_state)
+
+        bits_ops: list[Operation] = [
+            smt_bv.ExtractOp(operands[0], i, i) for i in range(n)
+        ]
+        cur_bits: SSAValue = bits_ops[0].results[0]
+        concat_ops: list[smt_bv.ConcatOp] = []
+        for bit in bits_ops[1:]:
+            concat_ops.append(smt_bv.ConcatOp(cur_bits, bit.results[0]))
+            cur_bits = concat_ops[-1].res
+
+        rewriter.insert_op_before_matched_op(bits_ops + concat_ops)
+        return ((concat_ops[-1].res,), effect_state)
 
 
 transfer_semantics: dict[type[Operation], OperationSemantics] = {

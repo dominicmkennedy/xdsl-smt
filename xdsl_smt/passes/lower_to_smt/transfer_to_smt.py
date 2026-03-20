@@ -18,10 +18,7 @@ from xdsl_smt.dialects.smt_dialect import BoolType, DefineFunOp, CallOp
 from xdsl.dialects.builtin import ModuleOp
 from ...utils.transfer_to_smt_util import (
     get_low_bits,
-    count_lzeros,
-    count_rzeros,
-    count_lones,
-    count_rones,
+    count_zero_side_bits,
 )
 
 
@@ -222,7 +219,9 @@ class ConstantOpPattern(smt_pure_lowering_pattern(transfer.Constant)):
 class CountLOneOpPattern(smt_pure_lowering_pattern(transfer.CountLOneOp)):
     def rewrite_pure(self, op: transfer.CountLOneOp, rewriter: PatternRewriter) -> None:
         operand = op.operands[0]
-        resList = count_lones(operand)
+        neg_b = smt_bv.NotOp.get(operand)
+        assert isinstance(neg_b.res.type, smt_bv.BitVectorType)
+        resList = [neg_b] + count_zero_side_bits(neg_b.results[0], True)
         for newOp in resList[:-1]:
             rewriter.insert_op_before_matched_op(newOp)
         rewriter.replace_matched_op(resList[-1])
@@ -233,7 +232,8 @@ class CountLZeroOpPattern(smt_pure_lowering_pattern(transfer.CountLZeroOp)):
         self, op: transfer.CountLZeroOp, rewriter: PatternRewriter
     ) -> None:
         operand = op.operands[0]
-        resList = count_lzeros(operand)
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+        resList = count_zero_side_bits(operand, True)
         for newOp in resList[:-1]:
             rewriter.insert_op_before_matched_op(newOp)
         rewriter.replace_matched_op(resList[-1])
@@ -242,11 +242,11 @@ class CountLZeroOpPattern(smt_pure_lowering_pattern(transfer.CountLZeroOp)):
 class CountROneOpPattern(smt_pure_lowering_pattern(transfer.CountROneOp)):
     def rewrite_pure(self, op: transfer.CountROneOp, rewriter: PatternRewriter) -> None:
         operand = op.operands[0]
-        resList, afterList = count_rones(operand)
+        neg_b = smt_bv.NotOp.get(operand)
+        assert isinstance(neg_b.res.type, smt_bv.BitVectorType)
+        resList = [neg_b] + count_zero_side_bits(neg_b.results[0], False)
         for newOp in resList[:-1]:
             rewriter.insert_op_before_matched_op(newOp)
-        for newOp in afterList:
-            rewriter.insert_op_after_matched_op(newOp)
         rewriter.replace_matched_op(resList[-1])
 
 
@@ -255,12 +255,10 @@ class CountRZeroOpPattern(smt_pure_lowering_pattern(transfer.CountRZeroOp)):
         self, op: transfer.CountRZeroOp, rewriter: PatternRewriter
     ) -> None:
         operand = op.operands[0]
-        resList, afterList = count_rzeros(operand)
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+        resList = count_zero_side_bits(operand, False)
         for newOp in resList[:-1]:
             rewriter.insert_op_after_matched_op(newOp)
-        for newOp in afterList:
-            rewriter.insert_op_after_matched_op(newOp)
-        # countRzero is different, it insert operation after the matched op.
         rewriter.replace_matched_op(resList[-1])
 
 
