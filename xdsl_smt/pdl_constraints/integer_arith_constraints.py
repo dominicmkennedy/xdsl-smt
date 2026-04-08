@@ -415,6 +415,7 @@ def is_attr_not_equal(
     rewriter.replace_matched_op([eq_op], [])
     return eq_op.res
 
+
 def is_different_sign_than(
     op: ApplyNativeConstraintOp,
     rewriter: PatternRewriter,
@@ -436,6 +437,7 @@ def is_different_sign_than(
     different_sign = rewriter.insert(smt.DistinctOp(lhs_sign, rhs_sign)).res
     rewriter.erase_matched_op()
     return different_sign
+
 
 def is_arith_cmpi_predicate(
     op: ApplyNativeConstraintOp,
