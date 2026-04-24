@@ -29,14 +29,6 @@ class AbstractValueTypeSemantics(TypeSemantics):
     """Lower all types in an abstract value to SMT types
     But the last element is useless, this makes GetOp easier"""
 
-    def lower_type(self, ty: Attribute) -> Attribute:
-        """
-        If the input type is already a smt type, skip lowering
-        """
-        if ty.name.startswith("smt"):
-            return ty
-        return SMTLowerer.lower_type(ty)
-
     def get_semantics(self, type: Attribute) -> Attribute:
         assert isinstance(type, transfer.AbstractValueType) or isinstance(
             type, transfer.TupleType

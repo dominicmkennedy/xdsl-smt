@@ -90,45 +90,6 @@ def get_high_bits(b: SSAValue, low_bits: SSAValue) -> list[Operation]:
     return result
 
 
-def count_ones(b: SSAValue) -> list[Operation]:
-    assert isinstance(b.type, smt_bv.BitVectorType)
-    n = b.type.width.data
-    bits: list[Operation] = [smt_bv.ExtractOp(b, i, i) for i in range(n)]
-    zero = smt_bv.ConstantOp(0, n - 1)
-    bvs = [smt_bv.ConcatOp(zero.results[0], b.results[0]) for b in bits]
-    if n == 1:
-        return bits + [zero] + bvs
-    result = bvs[0].res
-    nb: list[Operation] = []
-    for i in range(1, n):
-        nb.append(smt_bv.AddOp(result, bits[i].results[0]))
-        result = nb[-1].results[0]
-    """
-    bits = [Extract(i, i, b) for i in range(n)]
-    bvs = [Concat(BitVecVal(0, n - 1), b) for b in bits]
-    nb = reduce(lambda x, y: x + y, bvs)
-    """
-    return bits + [zero] + bvs + nb
-
-
-def set_high_bits(b: SSAValue, high_bits: SSAValue) -> list[Operation]:
-    """
-    set_high_bits(x, high_bits) -> x | (get_high_bits_constant(high_bits))
-    """
-    result = get_high_bits_constant(high_bits)
-    result.append(smt_bv.OrOp(result[-1].results[0], b))
-    return result
-
-
-def set_low_bits(b: SSAValue, low_bits: SSAValue) -> list[Operation]:
-    """
-    set_low_bits(x, low_bits) -> x | (get_low_bits_constant(low_bits))
-    """
-    result = get_low_bits_constant(low_bits)
-    result.append(smt_bv.OrOp(result[-1].results[0], b))
-    return result
-
-
 def count_zero_side_bits(b: SSAValue, from_left: bool) -> list[Operation]:
     """Count zero bits from the left or right as a pure bitvector term."""
 
@@ -167,7 +128,6 @@ def count_zero_side_bits(b: SSAValue, from_left: bool) -> list[Operation]:
             top_mask = ((1 << step) - 1) << (width - step)
             top_mask_bv = get_const(top_mask)
             step_bv = get_const(step)
-
             masked = smt_bv.AndOp(current, top_mask_bv.results[0])
             is_zero = smt.EqOp(masked.results[0], zero.results[0])
             next_count = smt_bv.AddOp(count, step_bv.results[0])
