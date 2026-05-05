@@ -40,6 +40,8 @@ from xdsl.irdl import (
     irdl_to_attr_constraint,
 )
 from xdsl.utils.exceptions import VerifyException
+from xdsl.parser import Parser
+from xdsl.printer import Printer
 
 from ..traits.infer_type import InferResultTypeInterface
 
@@ -88,6 +90,7 @@ class Constant(IRDLOperation, InferResultTypeInterface):
     op: Operand = operand_def(T)
     result: OpResult = result_def(T)
     value: IntegerAttr[IndexType] = attr_def(IntegerAttr[IndexType])
+    assembly_format = "$op `,` $value attr-dict `:` type($op)"
 
     @staticmethod
     def infer_result_type(
@@ -118,6 +121,7 @@ class UnaryOp(IRDLOperation, InferResultTypeInterface, ABC):
 
     op: Operand = operand_def(T)
     result: OpResult = result_def(T)
+    assembly_format = "$op attr-dict `:` type($op)"
 
     @staticmethod
     def infer_result_type(
@@ -157,6 +161,7 @@ class BinOp(IRDLOperation, InferResultTypeInterface, ABC):
     lhs: Operand = operand_def(T)
     rhs: Operand = operand_def(T)
     result: OpResult = result_def(T)
+    assembly_format = "$lhs `,` $rhs attr-dict `:` type($lhs)"
 
     @staticmethod
     def infer_result_type(
@@ -257,43 +262,47 @@ class LShrOp(BinOp):
     name = "transfer.lshr"
 
 
+class OverflowPredicateOp(PredicateOp):
+    assembly_format = "$lhs `,` $rhs attr-dict `:` type($lhs)"
+
+
 @irdl_op_definition
-class UMulOverflowOp(PredicateOp):
+class UMulOverflowOp(OverflowPredicateOp):
     name = "transfer.umul_overflow"
 
 
 @irdl_op_definition
-class SMulOverflowOp(PredicateOp):
+class SMulOverflowOp(OverflowPredicateOp):
     name = "transfer.smul_overflow"
 
 
 @irdl_op_definition
-class UShlOverflowOp(PredicateOp):
+class UShlOverflowOp(OverflowPredicateOp):
     name = "transfer.ushl_overflow"
 
 
 @irdl_op_definition
-class SShlOverflowOp(PredicateOp):
+class SShlOverflowOp(OverflowPredicateOp):
     name = "transfer.sshl_overflow"
 
 
 @irdl_op_definition
-class UAddOverflowOp(PredicateOp):
+class UAddOverflowOp(OverflowPredicateOp):
     name = "transfer.uadd_overflow"
 
 
 @irdl_op_definition
-class SAddOverflowOp(PredicateOp):
+class SAddOverflowOp(OverflowPredicateOp):
     name = "transfer.sadd_overflow"
 
 
 @irdl_op_definition
-class USubOverflowOp(PredicateOp):
+class USubOverflowOp(OverflowPredicateOp):
     name = "transfer.usub_overflow"
 
 
 @irdl_op_definition
-class SSubOverflowOp(PredicateOp):
+class SSubOverflowOp(OverflowPredicateOp):
     name = "transfer.ssub_overflow"
 
 
@@ -389,6 +398,7 @@ class ExtractOp(IRDLOperation):
     numBits: Operand = operand_def(T)
     bitPosition: Operand = operand_def(T)
     result: OpResult = result_def(T)
+    assembly_format = "$val `,` $numBits `,` $bitPosition attr-dict `:` type($val)"
 
     def __init__(
         self,
@@ -479,6 +489,7 @@ class UnaryPredicateOp(IRDLOperation):
 
     val: Operand = operand_def(T)
     result: OpResult = result_def(i1)
+    assembly_format = "$val attr-dict `:` type($val)"
 
     def __init__(
         self,
@@ -510,6 +521,49 @@ class CmpOp(PredicateOp):
     name = "transfer.cmp"
 
     predicate: IntegerAttr[IndexType] = attr_def(IntegerAttr[IndexType])
+    _PREDICATE_TO_INT: ClassVar[dict[str, int]] = {
+        "eq": 0,
+        "ne": 1,
+        "slt": 2,
+        "sle": 3,
+        "sgt": 4,
+        "sge": 5,
+        "ult": 6,
+        "ule": 7,
+        "ugt": 8,
+        "uge": 9,
+    }
+    _INT_TO_PREDICATE: ClassVar[dict[int, str]] = {
+        v: k for k, v in _PREDICATE_TO_INT.items()
+    }
+
+    @classmethod
+    def parse(cls, parser: Parser) -> CmpOp:
+        pred = parser.parse_identifier()
+        if pred not in cls._PREDICATE_TO_INT:
+            parser.raise_error(f"Unknown comparison predicate '{pred}'")
+        parser.parse_characters(",")
+        lhs = parser.parse_unresolved_operand()
+        parser.parse_characters(",")
+        rhs = parser.parse_unresolved_operand()
+        parser.parse_characters(":")
+        operand_type = parser.parse_type()
+        lhs_resolved, rhs_resolved = parser.resolve_operands(
+            [lhs, rhs], [operand_type, operand_type], parser.pos
+        )
+        return CmpOp(lhs_resolved, rhs_resolved, pred)
+
+    def print(self, printer: Printer) -> None:
+        pred_int = self.predicate.value.data
+        pred_name = self._INT_TO_PREDICATE.get(pred_int)
+        if pred_name is None:
+            raise VerifyException(f"Unknown predicate value {pred_int}")
+        printer.print_string(f" {pred_name}, ")
+        printer.print_operand(self.lhs)
+        printer.print_string(", ")
+        printer.print_operand(self.rhs)
+        printer.print_string(" : ")
+        printer.print_attribute(self.lhs.type)
 
     def __init__(
         self,
@@ -518,20 +572,8 @@ class CmpOp(PredicateOp):
         arg: int | str,
     ):
         if isinstance(arg, str):
-            cmp_comparison_operations = {
-                "eq": 0,
-                "ne": 1,
-                "slt": 2,
-                "sle": 3,
-                "sgt": 4,
-                "sge": 5,
-                "ult": 6,
-                "ule": 7,
-                "ugt": 8,
-                "uge": 9,
-            }
-            assert arg in cmp_comparison_operations
-            pred = cmp_comparison_operations[arg]
+            assert arg in self._PREDICATE_TO_INT
+            pred = self._PREDICATE_TO_INT[arg]
         else:
             pred = arg
         assert pred >= 0 and pred <= 9
@@ -584,6 +626,9 @@ class GetOp(IRDLOperation, InferResultTypeInterface):
     abs_val: Operand = operand_def(AbstractValueType)
     index: IntegerAttr[IndexType] = attr_def(IntegerAttr[IndexType])
     result: OpResult = result_def(Attribute)
+    assembly_format = (
+        "$abs_val `[` $index `]` attr-dict `:` type($abs_val) `->` type($result)"
+    )
 
     @staticmethod
     def infer_result_type(
@@ -627,6 +672,9 @@ class MakeOp(IRDLOperation, InferResultTypeInterface):
 
     arguments: VarOperand = var_operand_def(Attribute)
     result: OpResult = result_def(AbstractValueType)
+    assembly_format = (
+        "$arguments attr-dict `:` `(` type($arguments) `)` `->` type($result)"
+    )
 
     @staticmethod
     def infer_result_type(
@@ -671,6 +719,9 @@ class SelectOp(IRDLOperation):
     true_value: Operand = operand_def(T)
     false_value: Operand = operand_def(T)
     result: OpResult = result_def(T)
+    assembly_format = (
+        "$cond `,` $true_value `,` $false_value attr-dict `:` type($true_value)"
+    )
 
     def __init__(
         self,
