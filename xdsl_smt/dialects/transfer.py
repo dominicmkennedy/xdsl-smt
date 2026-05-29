@@ -153,6 +153,73 @@ class ReverseBitsOp(UnaryOp):
     name = "transfer.reverse_bits"
 
 
+@irdl_op_definition
+class AbsOp(UnaryOp):
+    name = "transfer.abs"
+
+
+@irdl_op_definition
+class TruncToBoolOp(IRDLOperation, InferResultTypeInterface):
+    name = "transfer.trunc_to_bool"
+
+    T: ClassVar = VarConstraint(
+        "T", irdl_to_attr_constraint(TransIntegerType | IntegerType)
+    )
+
+    op: Operand = operand_def(T)
+    result: OpResult = result_def(IntegerType(1))
+    assembly_format = "$op attr-dict `:` type($op) `to` type($result)"
+
+    @staticmethod
+    def infer_result_type(
+        operand_types: Sequence[Attribute], attributes: Mapping[str, Attribute] = {}
+    ) -> Sequence[Attribute]:
+        match operand_types:
+            case [_]:
+                return [i1]
+            case _:
+                raise VerifyException("TruncToBool operation expects one operand")
+
+    def __init__(
+        self,
+        op: SSAValue,
+    ):
+        super().__init__(
+            operands=[op],
+            result_types=[i1],
+        )
+
+
+class BoolExtOp(IRDLOperation, ABC):
+    T: ClassVar = VarConstraint(
+        "T", irdl_to_attr_constraint(TransIntegerType | IntegerType)
+    )
+
+    op: Operand = operand_def(IntegerType(1))
+    result: OpResult = result_def(T)
+    assembly_format = "$op attr-dict `:` type($op) `to` type($result)"
+
+    def __init__(
+        self,
+        op: SSAValue,
+        result_type: Attribute,
+    ):
+        super().__init__(
+            operands=[op],
+            result_types=[result_type],
+        )
+
+
+@irdl_op_definition
+class ZextBoolOp(BoolExtOp):
+    name = "transfer.zext_bool"
+
+
+@irdl_op_definition
+class SextBoolOp(BoolExtOp):
+    name = "transfer.sext_bool"
+
+
 class BinOp(IRDLOperation, InferResultTypeInterface, ABC):
     T: ClassVar = VarConstraint(
         "T", irdl_to_attr_constraint(TransIntegerType | IntegerType)
@@ -909,6 +976,10 @@ Transfer = Dialect(
         AddPoisonOp,
         RemovePoisonOp,
         ReverseBitsOp,
+        AbsOp,
+        TruncToBoolOp,
+        ZextBoolOp,
+        SextBoolOp,
     ],
     [TransIntegerType, AbstractValueType, TupleType],
 )

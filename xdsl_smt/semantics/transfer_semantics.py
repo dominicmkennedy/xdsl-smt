@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 from xdsl.pattern_rewriter import PatternRewriter
 from xdsl_smt.dialects import smt_bitvector_dialect as smt_bv
@@ -237,6 +237,104 @@ def smt_bool_to_bv1(bool_val: SSAValue) -> tuple[SSAValue, list[Operation]]:
     b0 = smt_bv.ConstantOp.from_int_value(0, 1)
     ite_op = smt.IteOp(bool_val, b1.res, b0.res)
     return ite_op.res, [b1, b0, ite_op]
+
+
+def wrap_total_integer_result(
+    value: SSAValue, result_type: Attribute
+) -> tuple[SSAValue, list[Operation]]:
+    """
+    Wrap a raw bitvector result in a no-poison pair when the source result type
+    lowers to the builtin integer representation.
+    """
+    lowered_type = SMTLowerer.lower_type(result_type)
+    if isinstance(lowered_type, PairType):
+        no_poison = smt.ConstantBoolOp(False)
+        pair = PairOp(value, no_poison.result)
+        return pair.res, [no_poison, pair]
+    return value, []
+
+
+class AbsOpSemantics(OperationSemantics):
+    def get_semantics(
+        self,
+        operands: Sequence[SSAValue],
+        results: Sequence[Attribute],
+        attributes: Mapping[str, Attribute | SSAValue],
+        effect_state: SSAValue | None,
+        rewriter: PatternRewriter,
+    ) -> tuple[Sequence[SSAValue], SSAValue | None]:
+        operand = operands[0]
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+
+        zero = smt_bv.ConstantOp(0, operand.type.width)
+        neg = smt_bv.NegOp(operand)
+        is_negative = smt_bv.SltOp(operand, zero.res)
+        abs_val = smt.IteOp(is_negative.res, neg.res, operand)
+        result, wrap_ops = wrap_total_integer_result(abs_val.res, results[0])
+
+        rewriter.insert_op_before_matched_op(
+            [zero, neg, is_negative, abs_val] + wrap_ops
+        )
+        return ((result,), effect_state)
+
+
+class TruncToBoolOpSemantics(OperationSemantics):
+    def get_semantics(
+        self,
+        operands: Sequence[SSAValue],
+        results: Sequence[Attribute],
+        attributes: Mapping[str, Attribute | SSAValue],
+        effect_state: SSAValue | None,
+        rewriter: PatternRewriter,
+    ) -> tuple[Sequence[SSAValue], SSAValue | None]:
+        operand = operands[0]
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+
+        trunc = smt_bv.ExtractOp(operand, 0, 0)
+        result, wrap_ops = wrap_total_integer_result(trunc.res, results[0])
+
+        rewriter.insert_op_before_matched_op([trunc] + wrap_ops)
+        return ((result,), effect_state)
+
+
+@dataclass
+class BoolExtOpSemantics(OperationSemantics):
+    ext_op_type: type[smt_bv.ZeroExtendOp] | type[smt_bv.SignExtendOp]
+
+    def get_semantics(
+        self,
+        operands: Sequence[SSAValue],
+        results: Sequence[Attribute],
+        attributes: Mapping[str, Attribute | SSAValue],
+        effect_state: SSAValue | None,
+        rewriter: PatternRewriter,
+    ) -> tuple[Sequence[SSAValue], SSAValue | None]:
+        operand = operands[0]
+        ops: list[Operation] = []
+        if isinstance(operand.type, PairType):
+            value = FirstOp(operand)
+            operand = value.res
+            ops.append(value)
+        assert isinstance(operand.type, smt_bv.BitVectorType)
+        assert operand.type.width.data == 1
+        result_type = SMTLowerer.lower_type(results[0])
+        if isinstance(result_type, PairType):
+            raw_result_type = cast(PairType[Attribute, Attribute], result_type).first
+        else:
+            raw_result_type = result_type
+        assert isinstance(raw_result_type, smt_bv.BitVectorType)
+
+        if raw_result_type.width.data == 1:
+            extended = operand
+            ext_ops: list[Operation] = []
+        else:
+            ext_op = self.ext_op_type(operand, raw_result_type)
+            extended = ext_op.res
+            ext_ops = [ext_op]
+        result, wrap_ops = wrap_total_integer_result(extended, results[0])
+
+        rewriter.insert_op_before_matched_op(ops + ext_ops + wrap_ops)
+        return ((result,), effect_state)
 
 
 class UMulOverflowOpSemantics(OperationSemantics):
@@ -1147,4 +1245,8 @@ transfer_semantics: dict[type[Operation], OperationSemantics] = {
     transfer.AddPoisonOp: AddPoisonOpSemantics(),
     transfer.RemovePoisonOp: RemovePoisonOpSemantics(),
     transfer.ReverseBitsOp: ReverseBitsOpSemantics(),
+    transfer.AbsOp: AbsOpSemantics(),
+    transfer.TruncToBoolOp: TruncToBoolOpSemantics(),
+    transfer.ZextBoolOp: BoolExtOpSemantics(smt_bv.ZeroExtendOp),
+    transfer.SextBoolOp: BoolExtOpSemantics(smt_bv.SignExtendOp),
 }
