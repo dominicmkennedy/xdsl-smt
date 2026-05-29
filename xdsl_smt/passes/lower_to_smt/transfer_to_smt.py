@@ -116,10 +116,8 @@ class UMulOverflowOpPattern(smt_pure_lowering_pattern(transfer.UMulOverflowOp)):
         b1 = smt_bv.ConstantOp.from_int_value(1, 1)
         b0 = smt_bv.ConstantOp.from_int_value(0, 1)
         bool_to_bv = smt.IteOp(suml_nooverflow.res, b1.res, b0.res)
-        poison_op = smt.ConstantBoolOp(False)
-        res = PairOp(bool_to_bv.res, poison_op.result)
         rewriter.replace_matched_op(
-            [suml_nooverflow, b0, b1, bool_to_bv, poison_op, res]
+            [suml_nooverflow, b0, b1, bool_to_bv]
         )
 
 
@@ -154,10 +152,7 @@ class CmpOpPattern(smt_pure_lowering_pattern(transfer.CmpOp)):
         b0 = smt_bv.ConstantOp.from_int_value(0, 1)
         bool_to_bv = smt.IteOp(resList[-1].results[0], b1.results[0], b0.results[0])
 
-        poison_op = smt.ConstantBoolOp(False)
-        res_op = PairOp(bool_to_bv.results[0], poison_op.result)
-
-        resList += [b1, b0, bool_to_bv, poison_op, res_op]
+        resList += [b1, b0, bool_to_bv]
         rewriter.replace_matched_op(resList)
         # return resList
 

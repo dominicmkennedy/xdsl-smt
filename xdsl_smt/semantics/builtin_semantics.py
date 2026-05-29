@@ -7,28 +7,26 @@ from xdsl_smt.semantics.semantics import (
     TypeSemantics,
 )
 
-from xdsl_smt.dialects import smt_dialect as smt
 from xdsl_smt.dialects import smt_bitvector_dialect as smt_bv
-from xdsl_smt.dialects import smt_utils_dialect as smt_utils
 
 
 class IntegerTypeSemantics(TypeSemantics):
-    """Convert an integer type to a bitvector integer with a poison flag."""
+    """Convert an integer type to a total bitvector integer."""
 
     def get_semantics(self, type: Attribute) -> Attribute:
         assert isinstance(type, IntegerType)
-        return smt_utils.PairType(smt_bv.BitVectorType(type.width), smt.BoolType())
+        return smt_bv.BitVectorType(type.width)
 
 
 class IndexTypeSemantics(TypeSemantics):
     """
-    Convert an index type to a bitvector integer with a poison flag.
+    Convert an index type to a total bitvector integer.
     Index types are currently expected to be 64 bits wide integers.
     """
 
     def get_semantics(self, type: Attribute) -> Attribute:
         assert isinstance(type, IndexType)
-        return smt_utils.PairType(smt_bv.BitVectorType(64), smt.BoolType())
+        return smt_bv.BitVectorType(64)
 
 
 class IntegerAttrSemantics(AttributeSemantics):
