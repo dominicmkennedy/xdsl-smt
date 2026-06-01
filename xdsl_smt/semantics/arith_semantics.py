@@ -114,10 +114,25 @@ class ConstantSemantics(OperationSemantics):
             assert isa(value_value, IntegerAttr)
             value_value = IntegerAttrSemantics().get_semantics(value_value, rewriter)
 
-        no_poison = smt.ConstantBoolOp(False)
-        res = smt_utils.PairOp(value_value, no_poison.result)
-        rewriter.insert_op_before_matched_op([no_poison, res])
-        return ((res.res,), effect_state)
+        assert isinstance(value_value, SSAValue)
+        return ((value_value,), effect_state)
+
+
+@dataclass
+class TotalBitwiseSemantics(OperationSemantics):
+    op_type: type[smt_bv.AndOp] | type[smt_bv.OrOp] | type[smt_bv.XorOp]
+
+    def get_semantics(
+        self,
+        operands: Sequence[SSAValue],
+        results: Sequence[Attribute],
+        attributes: Mapping[str, Attribute | SSAValue],
+        effect_state: SSAValue | None,
+        rewriter: PatternRewriter,
+    ) -> tuple[Sequence[SSAValue], SSAValue | None]:
+        op = self.op_type(operands[0], operands[1])
+        rewriter.insert_op_before_matched_op([op])
+        return ((op.res,), effect_state)
 
 
 @dataclass
@@ -267,9 +282,6 @@ class AddiSemantics(SimplePurePoisonSemantics):
 
 SubiSemantics = single_binop_semantics(smt_bv.SubOp)
 MuliSemantics = single_binop_semantics(smt_bv.MulOp)
-AndiSemantics = single_binop_semantics(smt_bv.AndOp)
-OriSemantics = single_binop_semantics(smt_bv.OrOp)
-XoriSemantics = single_binop_semantics(smt_bv.XorOp)
 
 
 class MulSIExtendedSemantics(SimplePurePoisonSemantics):
@@ -944,9 +956,9 @@ arith_semantics: dict[type[Operation], OperationSemantics] = {
     arith.MuliOp: MuliSemantics(),
     arith.MulSIExtendedOp: MulSIExtendedSemantics(),
     arith.MulUIExtendedOp: MulUIExtendedSemantics(),
-    arith.AndIOp: AndiSemantics(),
-    arith.OrIOp: OriSemantics(),
-    arith.XOrIOp: XoriSemantics(),
+    arith.AndIOp: TotalBitwiseSemantics(smt_bv.AndOp),
+    arith.OrIOp: TotalBitwiseSemantics(smt_bv.OrOp),
+    arith.XOrIOp: TotalBitwiseSemantics(smt_bv.XorOp),
     arith.ShLIOp: ShliSemantics(),
     arith.DivSIOp: DivsiSemantics(),
     arith.DivUIOp: DivuiSemantics(),
