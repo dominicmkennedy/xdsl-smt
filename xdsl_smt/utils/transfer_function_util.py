@@ -80,18 +80,16 @@ def call_function_and_assert_result(
     callOp = call_function(func, args)
     if len(callOp.results) != 1:
         raise ValueError(f"Incorrect returned value {func.fun_name}")
-    firstOp = FirstOp(callOp.results[0])
-    assertOps = assert_result(firstOp.res, bv)
-    return [callOp, firstOp] + assertOps
+    assertOps = assert_result(callOp.results[0], bv)
+    return [callOp] + assertOps
 
 
 def call_function_and_eq_result_with_effect(
     func: DefineFunOp, args: list[SSAValue], bv: ConstantOp, effect: SSAValue
 ) -> tuple[list[Operation], EqOp]:
     callOp, callFirstOp = call_function_with_effect(func, args, effect)
-    firstOp = FirstOp(callFirstOp.res)
-    eqOp = EqOp(firstOp.res, bv.res)
-    return [callOp, callFirstOp, firstOp, eqOp], eqOp
+    eqOp = EqOp(callFirstOp.res, bv.res)
+    return [callOp, callFirstOp, eqOp], eqOp
 
 
 def call_function_and_assert_result_with_effect(
@@ -102,9 +100,8 @@ def call_function_and_assert_result_with_effect(
     equals to the bv
     """
     callOp, callFirstOp = call_function_with_effect(func, args, effect)
-    firstOp = FirstOp(callFirstOp.res)
-    assertOps = assert_result(firstOp.res, bv)
-    return [callOp, callFirstOp, firstOp] + assertOps
+    assertOps = assert_result(callFirstOp.res, bv)
+    return [callOp, callFirstOp] + assertOps
 
 
 def insert_argument_instances_to_block_with_effect(
