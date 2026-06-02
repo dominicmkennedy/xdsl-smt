@@ -167,7 +167,9 @@ def forward_soundness_check(
     abs_arg_ops = get_argument_instances_with_effect(abstract_func, int_attr)
     abs_args: list[SSAValue] = [arg.res for arg in abs_arg_ops]
     crt_arg_ops = get_argument_instances_with_effect(concrete_func, int_attr)
-    crt_args: list[SSAValue] = [arg.res for arg in crt_arg_ops]
+    crt_args_with_poison: list[SSAValue] = [arg.res for arg in crt_arg_ops]
+    crt_arg_first_ops: list[FirstOp] = [FirstOp(arg) for arg in crt_args_with_poison]
+    crt_args: list[SSAValue] = [arg.res for arg in crt_arg_first_ops]
 
     assert len(abs_args) == len(crt_args)
     arg_widths = get_argument_widths_with_effect(concrete_func)
@@ -211,12 +213,13 @@ def forward_soundness_check(
         abstract_func, abs_args, effect.result
     )
     call_crt_func_op, call_crt_func_first_op = call_function_with_effect(
-        concrete_func, crt_args, effect.result
+        concrete_func, crt_args_with_poison, effect.result
     )
+    call_crt_first_op = FirstOp(call_crt_func_first_op.res)
 
     abs_result_not_include_crt_result_ops = call_function_and_assert_result_with_effect(
         instance_constraint.getFunctionByWidth(result_width),
-        [call_abs_func_first_op.res, call_crt_func_first_op.res],
+        [call_abs_func_first_op.res, call_crt_first_op.res],
         constant_bv_0,
         effect.result,
     )
@@ -225,6 +228,7 @@ def forward_soundness_check(
         [effect]
         + abs_arg_ops
         + crt_arg_ops
+        + crt_arg_first_ops
         + [constant_bv_0, constant_bv_1]
         + abs_domain_constraints_ops
         + abs_arg_include_crt_arg_constraints_ops
@@ -235,6 +239,7 @@ def forward_soundness_check(
             call_abs_func_first_op,
             call_crt_func_op,
             call_crt_func_first_op,
+            call_crt_first_op,
         ]
         + abs_result_not_include_crt_result_ops
         + [CheckSatOp()]
@@ -280,7 +285,9 @@ def backward_soundness_check(
     abs_args: list[SSAValue] = [arg.res for arg in abs_arg_ops]
 
     crt_arg_ops = get_argument_instances_with_effect(concrete_func, int_attr)
-    crt_args: list[SSAValue] = [arg.res for arg in crt_arg_ops]
+    crt_args_with_poison: list[SSAValue] = [arg.res for arg in crt_arg_ops]
+    crt_arg_first_ops = [FirstOp(arg) for arg in crt_args_with_poison]
+    crt_args: list[SSAValue] = [arg.res for arg in crt_arg_first_ops]
 
     constant_bv_0 = ConstantOp(0, 1)
     constant_bv_1 = ConstantOp(1, 1)
@@ -289,8 +296,9 @@ def backward_soundness_check(
         abstract_func, abs_args, effect.result
     )
     call_crt_func_op, call_crt_func_first_op = call_function_with_effect(
-        concrete_func, crt_args, effect.result
+        concrete_func, crt_args_with_poison, effect.result
     )
+    call_crt_func_res_op = FirstOp(call_crt_func_first_op.res)
 
     abs_domain_constraints_ops = call_function_and_assert_result_with_effect(
         domain_constraint.getFunctionByWidth(result_width),
@@ -302,7 +310,7 @@ def backward_soundness_check(
     abs_arg_include_crt_res_constraint_ops = (
         call_function_and_assert_result_with_effect(
             instance_constraint.getFunctionByWidth(result_width),
-            [abs_args[0], call_crt_func_first_op.res],
+            [abs_args[0], call_crt_func_res_op.res],
             constant_bv_1,
             effect.result,
         )
@@ -332,12 +340,14 @@ def backward_soundness_check(
         [effect]
         + abs_arg_ops
         + crt_arg_ops
+        + crt_arg_first_ops
         + [constant_bv_0, constant_bv_1]
         + [
             call_abs_func_op,
             call_abs_func_first_op,
             call_crt_func_op,
             call_crt_func_first_op,
+            call_crt_func_res_op,
         ]
         + abs_domain_constraints_ops
         + abs_arg_include_crt_res_constraint_ops
@@ -432,9 +442,13 @@ def get_forall_abs_res_prime_constraint(
     This constraint is called abs_res_prime constraint
     """
     forall_abs_res_prime_constraint_block = Block()
-    crt_args: list[SSAValue] = insert_argument_instances_to_block_with_effect(
+    crt_args_with_poison: list[
+        SSAValue
+    ] = insert_argument_instances_to_block_with_effect(
         concrete_func, int_attr, forall_abs_res_prime_constraint_block
     )
+    crt_arg_first_ops: list[FirstOp] = [FirstOp(arg) for arg in crt_args_with_poison]
+    crt_args: list[SSAValue] = [arg.res for arg in crt_arg_first_ops]
     assert len(abs_args) == len(crt_args)
 
     abs_arg_include_crt_arg_constraints_ops: list[Operation] = []
@@ -471,16 +485,18 @@ def get_forall_abs_res_prime_constraint(
         forall_abs_res_prime_antecedent_and_ops,
     ) = compress_and_op(forall_abs_res_prime_antecedent_ops)
 
+    # crt_res_fist_op is with poison, so we need another first op
     crt_res_op, crt_res_first_op = call_function_with_effect(
-        concrete_func, crt_args, effect.result
+        concrete_func, crt_args_with_poison, effect.result
     )
+    crt_res_first_first_op = FirstOp(crt_res_first_op.res)
 
     (
         abs_res_prime_include_crt_res_ops,
         forall_abs_res_prime_consequent_eq,
     ) = call_function_and_eq_result_with_effect(
         instance_constraint.getFunctionByWidth(result_width),
-        [abs_res_prime, crt_res_first_op.res],
+        [abs_res_prime, crt_res_first_first_op.res],
         constant_bv_1,
         effect.result,
     )
@@ -491,10 +507,11 @@ def get_forall_abs_res_prime_constraint(
     forall_abs_res_prime_yield_op = YieldOp(forall_abs_res_prime_imply_op.result)
 
     forall_abs_res_prime_constraint_block.add_ops(
-        abs_arg_include_crt_arg_constraints_ops
+        crt_arg_first_ops
+        + abs_arg_include_crt_arg_constraints_ops
         + op_constraint_ops
         + forall_abs_res_prime_antecedent_and_ops
-        + [crt_res_op, crt_res_first_op]
+        + [crt_res_op, crt_res_first_op, crt_res_first_first_op]
         + abs_res_prime_include_crt_res_ops
         + [forall_abs_res_prime_imply_op, forall_abs_res_prime_yield_op]
     )
@@ -530,12 +547,14 @@ def get_forall_crt_res_prime_constraint(
     This is we called forall_crt_res_prime constraint
     """
     forall_crt_res_prime_constraint_block = Block()
-    crt_res_prime_values = insert_result_instances_to_block_with_effect(
+    crt_res_prime_with_poison = insert_result_instances_to_block_with_effect(
         concrete_func, forall_crt_res_prime_constraint_block
     )
 
-    assert len(crt_res_prime_values) == 1
-    crt_res_prime = crt_res_prime_values[0]
+    # crt_res_prime is with poison, thus we need do another firstOp here
+    assert len(crt_res_prime_with_poison) == 1
+    crt_res_prime_first_op = FirstOp(crt_res_prime_with_poison[0])
+    crt_res_prime = crt_res_prime_first_op.res
 
     (
         abs_res_prime_include_crt_res_prime_ops,
@@ -566,7 +585,8 @@ def get_forall_crt_res_prime_constraint(
     )
 
     forall_crt_res_prime_constraint_block.add_ops(
-        abs_res_prime_include_crt_res_prime_ops
+        [crt_res_prime_first_op]
+        + abs_res_prime_include_crt_res_prime_ops
         + abs_res_include_crt_res_prime_ops
         + [forall_crt_res_prime_constraint_imply, forall_crt_res_prime_constraint_yield]
     )
@@ -668,7 +688,11 @@ def forward_precision_check(
 
     # And(Not(getInstanceConstraint(abs_resInst, abs_res_prime0, abs_res_prime1)), getInstanceConstraint(abs_resInst, abs_res[0], abs_res[1]))
 
-    abs_res_ele_ops, abs_res_ele = get_result_instance_with_effect(concrete_func)
+    abs_res_ele_ops, abs_res_ele_with_poison = get_result_instance_with_effect(
+        concrete_func
+    )
+    abs_res_ele_first_op = FirstOp(abs_res_ele_with_poison)
+    abs_res_ele = abs_res_ele_first_op.res
 
     abs_res_prime_not_include_abs_res_ele_ops = (
         call_function_and_assert_result_with_effect(
@@ -698,6 +722,7 @@ def forward_precision_check(
         + [call_abs_func_op, call_abs_func_first_op]
         + forall_crt_res_prime_constraint_ops
         + abs_res_ele_ops
+        + [abs_res_ele_first_op]
         + abs_res_prime_not_include_abs_res_ele_ops
         + abs_res_include_abs_res_ele_ops
         + [CheckSatOp()]
