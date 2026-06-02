@@ -202,7 +202,7 @@ class BoolExtOp(IRDLOperation, ABC):
     def __init__(
         self,
         op: SSAValue,
-        result_type: Attribute,
+        result_type: Attribute = TransIntegerType(),
     ):
         super().__init__(
             operands=[op],
